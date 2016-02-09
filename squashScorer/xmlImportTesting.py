@@ -106,7 +106,11 @@ class SquashScorer:
     print "Testing: getMatches()"
     matches = self.root.findall("match")
     for match in matches:
-      self.matchResults.append(self.getMatchInfo(match))
+	  matchResult = self.getMatchInfo(match)
+	  if matchResult != None:
+		self.matchResults.append(matchResult)
+	  else:
+	    print "Match was invalid"
       # for neighbor in match.iter('gamedetails'):
         # print "\t" + str(neighbor.attrib)
       # for child in match:
@@ -182,7 +186,7 @@ class SquashScorer:
 	    scoreA += 1
 	else:
 	  print "Wait - this is currently undefined! (" + self.results[str(resultid)]
-#	print "We have a result! " + str(resultid) + ' - ' + self.results[str(resultid)]
+	print "We have a result! " + str(resultid) + ' - ' + self.results[str(resultid)] + '(' + self.getPlayer(currentServer) + ')' + str(scoreA) + '/' + str(scoreB)
 	
       elif resultid == 3:
 	print self.results[str(resultid)]
@@ -211,9 +215,22 @@ class SquashScorer:
 	    counter += 1
 
 	  #matchResult = scores
-	else:
+	elif gamesB > gamesA:  
 	  print "Match won by " + self.getPlayer(playerB)
 #	  matchResult = scores.reversed
+	  reverseTemp = matchResult[str(counter)+'B']
+	  matchResult[str(counter)+'B'] = matchResult[str(counter)+'A']
+	  matchResult[str(counter)+'A'] = reverseTemp
+	  sys.stdout.write(matchResult[str(counter)+'A'] + '/' + matchResult[str(counter)+'B']),
+	  while counter < len(matchResult)/2:
+		reverseTemp = matchResult[str(counter+1)+'B']
+		matchResult[str(counter+1)+'B'] = matchResult[str(counter+1)+'A']
+		matchResult[str(counter+1)+'A'] = reverseTemp
+		sys.stdout.write(", " + matchResult[str(counter+1)+'A'] + '/' + matchResult[str(counter+1)+'B']),
+		counter += 1
+	else:
+		print "Invalid match!"
+		return None
 	print "\n====="
       else:
 	if gameNumber == 1 and resultid == 6:
@@ -247,8 +264,8 @@ class SquashScorer:
     resultdate	= datetime.strptime(gamedetail.find('resultdate').text, '%Y-%m-%d %H:%M:%S')
     side	= gamedetail.find('side').text
     
-    if rallyid == str(198):
-      print 'matchid: ' + matchid + '\tgameno: ' + gameno + '\tplayed at ' + datetime.strftime(resultdate,'%Y-%m-%d %H:%M:%S')
+#    if rallyid == str(198):
+#      print 'matchid: ' + matchid + '\tgameno: ' + gameno + '\tplayed at ' + datetime.strftime(resultdate,'%Y-%m-%d %H:%M:%S')
     return (matchid, gameno, serverid, receiverid, recipientid, resultid, resultval, 
 		    resultdate, side)
 
@@ -280,14 +297,92 @@ class SquashScorer:
     return reason
   
   def generate_csv(self, outfile):
-    with open(outfile, 'w') as file_:
-      writer = csv.writer(file_, delimiter="\t")
+	import unicodedata
+	print "In Generate CSV function"
+	with open(outfile, 'w') as file_:
+		writer = csv.writer(file_, delimiter=",",dialect=csv.excel)
       
-      for M in self.matchResults: 
-	print str(M)
+		for M in self.matchResults: 
+			print "Create the wString array"
+			print str(M)
+			print '----'
+			wString = []
+			date=datetime.strftime(M['starttime'],'%d-%m-%Y')
+			event="TBC"
+			venue="TBC"
+			round="TBC"
+			winner=M['winner'].encode('ascii', 'ignore')
+			result="def"
+			loser=M['loser'].encode('ascii', 'ignore')
+			ranking="TBC"
+			position="TBC"
+			Qual="Not rank"
+			if M.has_key('1A'):
+				G1A=M['1A']
+				G1B=M['1B']
+			else:
+				G1A=""
+				G1B=""
+			if M.has_key('2A'):
+				G2A=M['2A']
+				G2B=M['2B']
+			else:
+				G2A=""
+				G2B=""
+			if M.has_key('3A'):
+				G3A=M['3A']
+				G3B=M['3B']
+			else:
+				G3A=""
+				G3B=""
+			if M.has_key('4A'):
+				G4A=M['4A']
+				G4B=M['4B']
+			else:
+				G4A=""
+				G4B=""
+			if M.has_key('5A'):
+				G5A=M['5A']
+				G5B=M['5B']
+			else:
+				G5A=""
+				G5B=""
+			starttime=datetime.strftime(M['starttime'],'%H:%M:%S')
+			if M['endtime'] == None:
+				endtime=datetime.strftime(M['starttime'],'%H:%M:%S')
+			else:
+				endtime=datetime.strftime(M['endtime'],'%H:%M:%S')
+			wString.append(date)
+			wString.append(event)
+			wString.append(venue)
+			wString.append(round)
+			wString.append(winner)
+			wString.append(ranking)
+			wString.append(result)
+			wString.append(loser)
+			wString.append(ranking)
+			wString.append(position)
+			wString.append(Qual)
+			wString.append(G1A)
+			wString.append(G1B)
+			wString.append(G2A)
+			wString.append(G2B)
+			wString.append(G3A)
+			wString.append(G3B)
+			wString.append(G4A)
+			wString.append(G4B)
+			wString.append(G5A)
+			wString.append(G5B)
+			wString.append(starttime)
+			wString.append(endtime)
+
+			print "print the wString array"
+			print str(M)
+			print str(wString)
+			writer.writerow(wString)
 	
-    return
-      
+	return
+    
 	
 def generate_csv(root, outfile):
 
