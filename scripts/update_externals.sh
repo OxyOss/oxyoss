@@ -1,0 +1,1 @@
+svn pe svn:externals $*

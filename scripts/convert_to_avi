@@ -1,0 +1,78 @@
+#!/bin/bash
+SAVEIFS=$IFS
+IFS=$(echo -en "\n\b")
+PDIR=$(echo $PWD)
+cd $1
+ext=$2
+if [ $# == 3 ]
+then
+    OUTPUT_DIR=${PDIR}/${3}
+else
+    OUTPUT_DIR=.
+fi
+for f in *.${ext}
+
+do
+ffmpeg -i $f -s hd720 -acodec mp3 -vcodec wmv2 -r 25 -ar 44100 -vb 7500k ${OUTPUT_DIR}/${f%.${ext}}.avi
+done
+IFS=$SAVEIFS
+
+
+# Info from xcode conversion check:
+#FILE:  c:/rt/ConversionServer/input/privateInput/OZ_qtr_m1_replay
+
+#Checking mux rate
+#   -expecting:    5100000
+#   -but is:   7962353
+
+
+# Checking horizontal size
+#   -expecting:    720
+#   -but is:   1280
+# Checking vertical size
+#   -expecting:    576
+#   -but is:   720
+# Checking profile and level
+#   -expecting:    MP@ML
+#   -but is:   MP@H-14
+# Checking aspect ratio flag
+#   -expecting:    0
+#   -but is:   2
+# Checking bit rate
+#   -expecting:    4400000
+#   -but is:   104857200
+# Checking progressive(1)/interlaced(0)
+#   -expecting:    0
+#   -but is:   1
+
+
+# Checking audio bit rate
+#   -expecting:    256000
+#   -but is:   64000
+# Checking sampling rate (HZ)
+#   -expecting:    48000
+#   -but is:   44100
+
+
+# total problems found: 9
+
+#Checking mux rate
+#   -expecting:    5100000
+#   -but is:   5640000
+
+
+# Checking aspect ratio flag
+#   -expecting:    0
+#   -but is:   2
+# Checking bit rate
+#   -expecting:    4400000
+#   -but is:   104857200
+# Checking progressive(1)/interlaced(0)
+#   -expecting:    0
+#   -but is:   1
+
+
+
+
+# total problems found: 4
+

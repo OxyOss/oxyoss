@@ -1,0 +1,10 @@
+let g:netrw_dirhistmax  =10
+let g:netrw_dirhist_cnt =8
+let g:netrw_dirhist_1='/home/rweatherburn/temp'
+let g:netrw_dirhist_2='/image00/source/defcap_all/debug_gcc_x86'
+let g:netrw_dirhist_3='/etc/ldap'
+let g:netrw_dirhist_4='/home/rweatherburn/temp'
+let g:netrw_dirhist_5='/image00/source/m2editcl_RC/release/lin32'
+let g:netrw_dirhist_6='/home/rweatherburn/.gconf/apps/gnome-do/preferences/JIRA'
+let g:netrw_dirhist_7='/home/rweatherburn/temp'
+let g:netrw_dirhist_8='/image10/testing/temp'

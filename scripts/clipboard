@@ -1,0 +1,6 @@
+#!/usr/bin/env bash 
+#$1 | xclip -verbose -selection c
+$1 | xclip 
+
+#echo $1 | xclip -verbose -selection clipboard
+
