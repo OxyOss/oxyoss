@@ -1,0 +1,40 @@
+#!/bin/bash
+
+# globpath
+# (c) 2005 Kim Holburn <kim.holburn@nicta.com.au>
+# released under the GPL v2 http://www.gnu.org/copyleft/gpl.html
+
+# examples: globpath '*ping*'
+
+SAVEIFS="$IFS"
+IFS=":"
+paths=( $PATH )
+IFS="$SAVEIFS"
+
+
+found=0
+globit () {
+  local arg="$1"
+  arg2=${arg//[\?\*]/}
+#echo "debug arg=($arg) arg2=($arg2)"
+  if [ "$arg" == "$arg2" ]; then
+     arg="*$arg*"
+  fi
+#  local pings=( $(echo ${paths[@]/%/\/$arg}) )
+  local pings=$(echo ${paths[@]/%/\/$arg})
+
+  for i in ${pings[@]}; do
+    if [ -e "$i" ]; then
+      echo "$i"
+      found=1
+    fi 
+  done
+}
+
+for i in "$@"; do
+  globit "$i"
+done
+
+if [ "$found" -eq 0 ]; then
+  echo "nothing found"
+fi

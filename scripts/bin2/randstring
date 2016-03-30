@@ -1,0 +1,409 @@
+#!/usr/bin/perl -wT
+
+# (C) Kim Holburn 2003, 2011
+# released  under GNU Public License http://www.gnu.org/copyleft/gpl.html
+# script to generate pseudo-random strings
+# version 1.2 2011-09-22
+
+use strict;
+#use POSIX qw(strftime);
+
+sub fail_usage {
+  my (@mess) = @_;
+  my $name = $0;
+  $name =~ s#^.*/(.+)$#$1#;
+
+  for (@mess) { print STDERR "$name Error : $_ \n"; }
+  print STDERR <<EOM;
+Usage : $name -h|--help
+Usage : $name 
+Usage : $name [options] -p 1
+Usage : $name [options] [-g "groups"] [+g "groups"] [+G "chars"]
+Usage : $name [options] [-w]
+Usage : $name [options] -w 
+                         [-s <space chars>] [-S <nospace>][-W "number words"]
+                         [-x/--max maxwordsize] [-m/--min minwordsize]
+
+  modes: normal mode, word mode, help
+
+  -h|--help = show this help screen
+
+  options for all modes: [-t <times>] [-v [-v] verbose ]
+    default number of times output is 1
+
+  -n|--normal normal mode (default)
+
+  options for normal mode (any of these options implies normal mode)
+  -c|--chars <chars> 
+    default number of chars output is 12
+    
+  -g|--groups "groups" = create groups of characters
+  +g|--add-groups "groups" = add to groups
+     "groups" can include any combination of :
+       l = lower case chars
+       u = upper case chars
+       d = digit chars
+       s = space
+       w = '#' and '\@' (normally not in passwords)
+       x = extended chars: !"$&'()<>[]{}*+-./%:;=?\^_`|~
+           or instead of x you could use
+         y = limited set of punctuation '+,-./:;_~'
+         Y = limited set of punctuation '-._'
+         X = extra (brackets and stuff) ()<>[]\{}
+         p = punctuation   "'`$%&*+-./:;=!?^_|~
+   default groups is "lllldddYYYsss"
+
+  +G|--add-chars <list> = add char list
+
+  -p|--preset = presets
+    -p 1 = $name -g lllldddYYYsss -c 12 -t 1
+    -p 2 = $name -g lllldddYY -c 12 -t 1
+    -p 3 = $name -g lllld -c 8 -t 1
+
+  wordy mode
+  -w|--word = make word-like random output
+
+  wordy options (any of these options implies wordy mode):
+    -s|--spaces <space characters>
+      default: -s ' '
+    -S|--no-space <char> : no space (one of the space characters can be no space)
+    -m/--min "minimum word length" default = 2
+    -x/--max "max word length"     default = 7
+    -W|--words "number of words"
+
+  Default is normal mode:
+    $name -g lllldddYYYsss -c 12 -t 1
+
+  Default for -w is:
+    $name -w -W 4 -m 2 -x 7 -t 1 -s " "
+    
+  Examples: 
+    The way I normally use this is:
+      $name         (generate a password of random characters)
+      $name -w      (generate a random wordlike phrase)
+
+    Other possibilities:
+    $name -g llldudx -c 30 
+    $name +g dy -c 20 -t 10
+    $name +G "--__" -c 30 
+    $name -w 
+    
+EOM
+  exit 1;
+}
+
+
+#srand (time()^($$+($$<<15)));
+my @chars=();
+my @digit=qw(0 1 2 3 4 5 6 7 8 9);
+my @lower=qw(a b c d e f g h i j k l m n o p q r s t u v w x y z);
+my @upper=qw(A B C D E F G H I J K L M N O P Q R S T U V W X Y Z);
+my @vowels=qw(a e i o u y);
+my @consonants=qw(b c d f g h j k l m n p q r s t v w x y z);
+my @VOWELS=qw(A E I O U Y);
+my @CONSONANTS=qw(B C D F G H J K L M N P Q R S T V W X Y Z);
+# !"#$%&'()*+,-./0123456789:;<=>?@
+#ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`
+#abcdefghijklmnopqrstuvwxyz{|}~
+my @extended=(
+  "!", '"', '$', '%', '&', "'", '(', ')', '*', '+', ',', '-', '.', '/',
+  ':', ';', '<', '=', '>', '?',
+  '[', "\\", ']', '^', '_', '`',
+  '{', '|', '}', '~'
+);
+my @extended2=qw#! " $ % & ' ( ) * + - . / : ; < = > ? [ \\ ] ^ _ ` { | } ~#;
+push @extended2, ",";
+my @punct=(
+  "!", '"', '$', '%', '&', "'",
+  '*', '+', ',', '-', '.', '/',
+  ':', ';', '=', '?', '^', '_', '`', '|', '~'
+);
+my @punct2=qw( ! " $ % & ' * + - . / : ; = ? ^ _ ` | ~);
+push @punct2, ",";
+my @limited=( '+', ',', '-', '.', '/', ':', ';', '_', '~');
+my @limited1=( '-', '.', '_');
+#my @extra=( '(', ')', '<', '>', '[', "\\", ']', '{', '}', );
+my @extra=qw/ ( ) < > [ \\ ] { } /;
+my @space=(" ");
+my @weird=('#', '@');
+
+my $number=12;
+my $times=1;
+my $preset=0;
+my @presetl=qw(lllldddYYYsss lllldddYY lllld); 
+my @presetc=qw(12 12 8); 
+my @presetn=qw(1 1 1); 
+my $defaultlist=$presetl[0];
+my $list=$defaultlist;
+my $listy=0;
+my $added=''; 
+my $verbose=0;
+my $wordy=0;
+my $lower=1;
+my $upper=0;
+my $wmin=2;
+my $wmax=7;
+my $nwords=4;
+my $space = " ";
+my $nospace = '';
+
+#if ($#ARGV < 0) { &fail_usage ("no arguments or files"); }
+#if ($ARGV[0]!~/^-/) { &fail_usage ("no address"); }
+while ($ARGV=$ARGV[0]) {
+  if ($ARGV eq "-c" or $ARGV eq "--chars")  {
+    shift @ARGV;
+    if ($#ARGV < 0) { &fail_usage ("no number after -c option"); }
+    $number=shift @ARGV;
+    if ($number !~ /^[0-9]{1,}$/)
+      { &fail_usage ("I don't understand ($number) as a number"); }
+    if ($number <= 0)
+      { &fail_usage ("number must be greater than 0 (was $number)"); }
+    $listy=1;
+    $wordy = 0;
+  }
+  elsif ($ARGV eq "-t" or $ARGV eq "--times")  {
+    shift @ARGV;
+    if ($#ARGV < 0) { &fail_usage ("no times after -t option"); }
+    $times=shift @ARGV;
+    if ($times !~ /^[0-9]{1,}$/)
+      { &fail_usage ("I don't understand ($times) as a number"); }
+    if ($times <= 0)
+      { &fail_usage ("times must be greater than 0 (was $times)"); }
+  }
+  elsif ($ARGV eq "-g" or $ARGV eq "--groups")  {
+    shift @ARGV;
+    $list = $ARGV[0];
+    shift @ARGV;
+    if (!$list) { fail_usage("no list"); }
+    if ($list =~ /[^ludxXpswyY]/)
+      { fail_usage("only ludxXpsw allowed in list"); }
+    $listy=1;
+    $wordy = 0;
+  }
+  elsif ($ARGV eq "+g" or $ARGV eq "--add-groups")  {
+    shift @ARGV;
+    my $newlist = $ARGV[0];
+    shift @ARGV;
+    if (!$newlist) { fail_usage("no list to add"); }
+    if ($newlist =~ /[^ludxXpswyY]/)
+      { fail_usage("only ludxXpsw allowed to add to list"); }
+    $list .= $newlist;
+    $listy=1;
+    $wordy = 0;
+  }
+  elsif ($ARGV eq "+G" or $ARGV eq "--add-chars")  {
+    shift @ARGV;
+    my $newadded = $ARGV[0];
+    shift @ARGV;
+    if (!$newadded) { fail_usage("no characters to add"); }
+    if ($newadded =~ /[^[:print:]]/)
+      { fail_usage("only printable chars allowed to add to list"); }
+    $added .= $newadded;
+    $listy=1;
+    $wordy = 0;
+  }
+  elsif ($ARGV eq "-w" or $ARGV eq "--word")  { 
+    if ($list eq $defaultlist) { $list = ""; }
+    $wordy=1;
+    shift @ARGV;
+  }
+  elsif ($ARGV eq "-W" or $ARGV eq "--words")  {
+    shift @ARGV;
+    if ($#ARGV < 0) { &fail_usage ("no number after -W option"); }
+    $nwords=shift @ARGV;
+    if ($nwords !~ /^[0-9]{1,}$/)
+      { &fail_usage ("I don't understand ($nwords) as a number"); }
+    if ($nwords <= 0)
+      { &fail_usage ("number of words must be greater than 0 (was $nwords)"); }
+  }
+  elsif ($ARGV eq "-x" || $ARGV eq "--max")  {
+    shift @ARGV;
+    if ($#ARGV < 0) { &fail_usage ("no number after -x option"); }
+    $wmax=shift @ARGV;
+    if ($wmax !~ /^[0-9]{1,}$/)
+      { &fail_usage ("I don't understand ($wmax) as a number"); }
+    if ($wmax <= 0)
+      { &fail_usage ("max word length must be greater than 0 (was $wmax)"); }
+    $wordy=1;
+  }
+  elsif ($ARGV eq "-s" or $ARGV eq "--spaces")  {
+    shift @ARGV;
+    if ($#ARGV < 0) { &fail_usage ("no string after -s option"); }
+    $space=shift @ARGV;
+    $space =~ s/[^[:print:]]//g; # only printable chars;
+    $wordy=1;
+  } 
+  elsif ($ARGV eq "-S" or $ARGV eq "--no-space")  {
+    shift @ARGV;
+    if ($#ARGV < 0) { &fail_usage ("no string after -S option"); }
+    $nospace=shift @ARGV;
+    $nospace =~ s/[^[:print:]]//g; # only printable chars
+    $nospace =~ s/^(.).*/$1/g;     # only one char
+    $wordy=1;
+  } 
+  elsif ($ARGV eq "-m" || $ARGV eq "--min")  {
+    shift @ARGV;
+    if ($#ARGV < 0) { &fail_usage ("no number after -m option"); }
+    $wmin=shift @ARGV;
+    if ($wmin !~ /^[0-9]{1,}$/)
+      { &fail_usage ("I don't understand ($wmin) as a number"); }
+    if ($wmin <= 0)
+      { &fail_usage ("min word length must be greater than 0 (was $wmin)"); }
+    $wordy=1;
+  }
+  elsif ($ARGV eq "-p" or $ARGV eq "--preset")  { 
+    shift @ARGV;
+    if ($#ARGV < 0) { &fail_usage ("no preset number after -p option"); }
+    $preset=shift @ARGV;
+    if ($preset !~ /^[0-9]{1,}$/)
+      { &fail_usage ("I don't understand ($preset) as a preset number"); }
+    if ($preset <= 0)
+      { &fail_usage ("preset number must be greater than 0 (was $preset)"); }
+    if ($preset > 2)
+      { &fail_usage ("preset number must be less than 3 (was $preset)"); }
+    $preset -= 1;
+    $list = $presetl[$preset]; 
+    $number = $presetn[$preset];
+    $times = $presetc[$preset];
+    $listy = 1;
+    $wordy = 0;
+  }
+  elsif ($ARGV eq "-h" || $ARGV eq "--help")  { &fail_usage (); }
+  elsif ($ARGV eq "-v" or $ARGV eq "--verbose")  { $verbose++; shift @ARGV; }
+  elsif ($ARGV eq "-n" or $ARGV eq "--normal")  { $wordy=0; shift @ARGV; } # but will be overridden by a wordy option
+  elsif ($ARGV =~ /^-/)  { &fail_usage ("unknown option \"$ARGV\""); }
+  else {  last; }
+}
+if (scalar @ARGV > 0) { &fail_usage ("extra arguments"); }
+#if ($listy > 0 and $wordy > 0) { &fail_usage ("normal and wordy output requested"); }
+if ($wmin > $wmax)
+  { &fail_usage ("min word length must be less than oe equal to max ($wmin > $wmax)"); }
+
+sub lett {
+  my @ch = @_;
+#  my $ind = int(rand($#ch));
+  my $ind = int(rand(scalar @ch));
+#  if ($verbose) { print "debug \n";}
+  if ($verbose > 1) { print " # debug ch=(",join ('', @ch),") [$ind]=\"$ch[$ind]\"\n";}
+  $ch[$ind];
+}
+
+sub spacer () {
+  my $spaced = "";
+  if (length($space) <= 0) { return $spaced; }
+  if (length($space) == 1) { $spaced = $space; }
+  else { $spaced = substr ($space, int(rand(length($space))), 1); }
+  if ($spaced eq $nospace) { $spaced = ""; }
+  return $spaced;
+}
+
+sub wordy {
+  my @v;
+  my @c;
+  my $times = 1;
+  my $number = shift;
+  my $word = "";
+  
+#  if ($verbose) { print "# c = $times \n"; }
+  if ($upper) { push @v, @VOWELS; push @c, @CONSONANTS; }
+  if ($lower) { push @v, @vowels; push @c, @consonants; }
+  for (1..$times) {
+    my ($v, $c) = ('v', 'c');
+    my $didpunc=0;
+    if ($verbose > 1) { print " punct=(", join ('', @chars), ") \n"; }
+    my $punc=5;
+    my $t = (int(rand(3)))?$c:$v;
+    my $p = "";
+    for my $i (1..$number) {
+      my $c = lett (($t eq 's')?@chars:(($t eq 'v')?@v:@c));
+      $p .= $c;
+      $word .=  $c;
+      if ($verbose > 1)
+        { print " i=($i) t=($t) #chars=(", scalar @chars, ") v=($v) c=($c)\n"; }
+      if ($t eq 'v') { ($v, $c) = ('v', 'c'); }
+      else { ($c, $v) = ('v', 'c'); }
+      if ($t eq 's') { $punc = 1000; $didpunc=1; }
+      if ($didpunc) { $didpunc++; }
+      if ($didpunc>=3) { $didpunc=0; $punc=5; }
+      $t = (!(scalar @chars) || ($i>=($number-1)) || int(rand($punc)))?
+             ((int(rand(3)))?$c:$v):'s';
+    }
+    if ($verbose > 1) { print "$p "; }
+  }
+  return $word; 
+}
+
+my $spacel = length $space;
+if ($verbose) {
+  print "# (chars)   -c \"$number\"  \n";
+  print "# (times)   -t \"$times\"  \n";
+  print "# (nwords)  -W \"$nwords\"  \n";
+  print "# (max)     -x \"$wmax\"  \n";
+  print "# (min)     -m \"$wmin\"  \n";
+  print "# (space)   -s \"$space\" ($spacel) \n";  
+  print "# (nospace) -S \"$nospace\" \n";  
+  print "# (wordy)   -w \"$wordy\" \n";  
+  print "\n";
+}
+
+if ($wordy) {
+  my $dist = $wmax - $wmin;
+
+  for (1..$times) { 
+    my $out="";
+    if ($verbose) { print "# dist = ($dist)\n"; }
+    for (1..$nwords) { 
+      my $wordl = $wmin;
+      if ($dist) { $wordl += int(rand($dist)) }
+      if (length ($out) > 0) { $out .= spacer(); }
+      $out .= wordy($wordl);
+    }
+    print $out;
+    print "\n";
+  }
+  exit;
+}
+
+#$outputfile .= strftime (":%M:%S:", localtime());
+# default is lllldddYYYsss ($presets[$preset])
+for my $c (split "", $list) {
+  if ($c eq "l") { push @chars, @lower; }
+  elsif ($c eq "u") { push @chars, @upper; }
+  elsif ($c eq "d") { push @chars, @digit; }
+  elsif ($c eq "x") { push @chars, @extended; }
+  elsif ($c eq "X") { push @chars, @extra; }
+  elsif ($c eq "p") { push @chars, @punct; }
+  elsif ($c eq "s") { push @chars, @space; }
+  elsif ($c eq "w") { push @chars, @weird; }
+  elsif ($c eq "y") { push @chars, @limited; }
+  elsif ($c eq "Y") { push @chars, @limited1; }
+}
+if ($added) { push @chars, split (//, $added); }
+if ($verbose) {
+
+  print "# list = ($list) added = ($added) \n";  
+  my @charsp = @chars;
+  print "# chars[",scalar @charsp,"]=\n";
+  my $c="# ( ";
+  while (scalar @charsp > 70) {
+    print $c, join ("", splice(@charsp,0,70)), "\n";
+    $c="#   ";
+  }
+  print $c, join ("", @charsp);
+  print " )\n\n";
+}
+
+for (1..$times) { 
+  for (1..$number) { print $chars[int(rand(scalar @chars))]; }
+  print "\n";
+}
+
+# not allowed #@
+# !"#$%&'()*+,-./0123456789:;<=>?@
+#ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^`
+#abcdefghijklmnopqrstuvwxyz{|}~
+
+#print "debug extended  ", join " ", @extended, "\n";
+#print "debug extended2 ", join " ", @extended2, "\n";
+#print "debug punct  ", join " ", @punct, "\n";
+#print "debug punct2 ", join " ", @punct2, "\n";

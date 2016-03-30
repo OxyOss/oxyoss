@@ -1,0 +1,6 @@
+#!/bin/sh
+ADDR=`/sbin/ifconfig p128p1 | grep 'inet addr' | awk '{print $2}' | sed -e s/.*://`
+HOST=`hostname -f`
+echo "update delete $HOST A" > /tmp/nsupdate.txt
+echo "update add $HOST 86400 A $ADDR" >> /tmp/nsupdate.txt
+echo nsupdate /var/nsupdate.txt

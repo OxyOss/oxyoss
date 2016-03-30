@@ -1,0 +1,706 @@
+#!/usr/bin/perl -wT
+
+# (C) Kim Holburn 2011 
+# released  under GNU Public License http://www.gnu.org/copyleft/gpl.html
+# script to generate pseudo-random sentences
+# version 1.3
+
+# word frequency lists:
+# http://www.kilgarriff.co.uk/bnc-readme.html
+# http://www.kilgarriff.co.uk/BNClists/all.al.gz
+# I expect a text file with an entry per line
+# space separated fields with  the 3 fields:
+# frequency-number, word and part-of-speech 
+# being all I use.
+# Part of speech is in BNC style. 
+# (the Grammatical Tagging of the British National Corpus)
+
+# I have removed a lot of entries using these following greps
+
+# grep -Pi "^\d+ [a-z_'-]+ " all.al > alln2.al  # only entries with a-z A-Z - _ '
+# grep -Pvi " '[^ ']*' " alln2.al>alln3.al      # remove entries in quotes
+# grep -v '[-]-' alln3.al > alln4.al            # remove entries with --
+# grep -v '^1 ' alln4.al > alln5.al             # remove entries with a frequency of 1
+
+
+
+use strict;
+#use POSIX qw(strftime);
+my $verbose_error = 0;
+
+sub fail_usage {
+  my (@mess) = @_;
+  my $name = $0;
+  $name =~ s#^.*/(.+)$#$1#;
+
+  for (@mess) { print STDERR "$name Error : $_ \n"; }
+  if ($verbose_error) {
+    print STDERR <<EOM;
+Usage : $name  -h|--help
+Usage : $name 
+
+  options: [-t <times>] [-v [-v]]
+           [-l|--level <n>] 
+           [-p|--pop <popularity>]
+           [-b|--db]/[-f|--file]
+           [-g|--paragraph]/[-n|--sentence] 
+           [-f|--file-path </path>] 
+           [-d|--database </path>]
+           [-h|--help]
+
+  randsent has two input modes:
+    -F|--file-path "/path/to/word-frequency-list" 
+         (implies -f option)
+    -D|--db-path "/path/to/word-frequency-database" 
+         (sqlite3, implies -b(-d) option)
+
+    -f|--file  = use frequency weighted word list file
+                      with parts of speech (default)
+    -d|-b|--db = Use sqlite3 database instead of word list.
+              Database is created from the word list.
+              Instructions later.
+
+  and two output modes:
+    -n|--sentence  = sentence mode - output t sentences (default)
+    -g|--paragraph = paragraph mode - output t paragraphs
+
+    -v|--verbose = verbose - can be used more than once
+
+  other options :
+    -t|--times <num>  = output number of times (default 5)
+
+    -l|--level <n> = complexity level limit
+                (needs 4 or 5 at least)
+
+    -p|--pop <n> words popularity: 
+        only words of frequency greater than n
+        default is 1
+
+    default input mode is file = -f
+    default output mode is sentence = -n
+    default number of times output = -t 5
+    default limit = -l 12
+    default pop = -p 1
+
+  -h|--help = show this help screen
+    
+  Defaults are:
+    $name -F "${0}s/all.al" -t 5 -p 1 -l 12
+    $name -D "${0}s/randwords.db" -t 5 -p 1 -l 12
+  Examples: 
+    Main way of using:
+      $name -p 1000 -t 5 
+      $name -d -p 1000 -t 5 
+    
+EOM
+  }
+  exit 1;
+}
+
+use File::Basename;
+
+my $flist   = "all.al";
+my $fdict1  = "${0}s/$flist";
+my $fdict2  = dirname($0) . "/randwords/$flist"; 
+my $fdict   = "$fdict1";
+my @fdict   = ();
+my $dbfile  = "randwords.db";
+my $dbase1  = "${0}s/$dbfile";
+my $dbase2  = dirname($0) . "/randwords/$dbfile";
+my $dbase3  = dirname($0) . "/randsents/$dbfile";
+my $dbase   = "";
+my $sqlite3 = "/usr/bin/sqlite3";
+my $sqlite3a = "/usr/local/bin/sqlite3";
+$ENV{'PATH'} = "/usr/bin:/bin";
+my $level = 12;
+my $times=5;
+my $added=''; 
+my $verbose=0;
+my $lower=1;
+my $upper=0;
+my $space=" ";
+my $nospace="";
+my $pop=1;
+my $db=1;
+my $para=0;
+my $mess="";
+
+while ($ARGV=$ARGV[0]) {
+  if ($ARGV eq "-t" or $ARGV eq "--times")  {
+    shift @ARGV;
+    if ($#ARGV < 0) { &fail_usage ("no times after -t option"); }
+    $times=shift @ARGV;
+    if ($times !~ /^[0-9]{1,}$/)
+      { &fail_usage ("--times requires a number ($times)"); }
+    if ($times <= 0)
+      { &fail_usage ("times must be greater than 0 (was $times)"); }
+  } 
+  elsif ($ARGV eq "-p" or $ARGV eq "--pop")  {
+    shift @ARGV;
+    if ($#ARGV < 0) { &fail_usage ("no number after -p option"); }
+    $pop=shift @ARGV;
+    if ($pop !~ /^[0-9]{1,}$/)
+      { &fail_usage ("--pop requires a number ($pop)"); }
+    if ($pop <= 0)
+      { &fail_usage ("pop must be greater than 0 (was $pop)"); }
+  } 
+  elsif ($ARGV eq "-l" or $ARGV eq "--level")  {
+    shift @ARGV;
+    if ($#ARGV < 0) { &fail_usage ("no number after -l option"); }
+    my $mycomp=shift @ARGV;
+    if ($mycomp !~ /^[0-9]{1,}$/)
+      { &fail_usage ("--level requires a number ($mycomp)"); }
+    if ($mycomp <= 0)
+      { &fail_usage ("level must be greater than 0 (was $mycomp)"); }
+    $level = $mycomp;
+  } 
+  elsif ($ARGV eq "-s" or $ARGV eq "--spaces")  {
+    shift @ARGV;
+    if ($#ARGV < 0) { &fail_usage ("no string after -s option"); }
+    $space=shift @ARGV;
+    $space =~ s/[^[:print:]]//g; # only printable chars;
+  } 
+  elsif ($ARGV eq "-S" or $ARGV eq "--no-space")  {
+    shift @ARGV;
+    if ($#ARGV < 0) { &fail_usage ("no string after -S option"); }
+    $nospace=shift @ARGV;
+    $nospace =~ s/[^[:print:]]//g; # only printable chars
+    $nospace =~ s/^(.).*/$1/g;     # only one char
+  } 
+  elsif ($ARGV eq "-F" || $ARGV eq "--file-path") {
+    my $myopt = $ARGV;
+    my @mydict = ();
+    shift @ARGV;
+    my $file = shift @ARGV;
+    if (! -e $file) 
+      { fail_usage ("Can't find user supplied word list ($file)"); }
+    if (! -r $file) 
+      { fail_usage ("Can't read user supplied word list ($file)"); }
+    if (-d $file) {  # directory
+      opendir my($dh), $file or die "Couldn't open dir '$file': $!";
+      my @files = grep { (! -l $_) && -r _ && -f _ }
+        map { $_ = "$file/$_"; }
+        readdir $dh;  # read actual files but not directories
+      closedir $dh;
+      if (!scalar @files) {
+        fail_usage 
+          ("Couldn't find files to read in user supplied word list directory ($file)");
+       } 
+      push (@mydict, @files);
+    }
+    else { push (@mydict, $file); }
+    push (@fdict, @mydict);
+  }
+  elsif ($ARGV eq "-D" || $ARGV eq "--db-path") {
+    my @mydict = ();
+    shift @ARGV;
+    my $file = shift @ARGV;
+    if (! -e $file) 
+      { fail_usage ("Can't find user supplied database ($file)"); }
+    if (! -r $file) 
+      { fail_usage ("Can't read user supplied database ($file)"); }
+    $dbase = $file;
+    $db = 1;
+  }
+  elsif ($ARGV eq "-g" || $ARGV eq "--paragraph")  { $para=1; shift @ARGV; }
+  elsif ($ARGV eq "-n" || $ARGV eq "--sentence")  { $para=0; shift @ARGV; }
+  elsif ($ARGV eq "-d" || $ARGV eq "-b" || $ARGV eq "--db")  { $db=1; shift @ARGV; }
+  elsif ($ARGV eq "-f" || $ARGV eq "--file")  { $db=0; shift @ARGV; }
+  elsif ($ARGV eq "-h" || $ARGV eq "--help")  { $verbose_error=1; &fail_usage (); }
+  elsif ($ARGV eq "-v" or $ARGV eq "--verbose")  { $verbose++; shift @ARGV; }
+  elsif ($ARGV =~ /^-/)  { &fail_usage ("unknown option \"$ARGV\""); }
+  else {  last; }
+}
+if (scalar @ARGV > 0) { &fail_usage ("extra arguments"); }
+if (length $nospace) {
+  if (length $nospace > 1)
+    { fail_usage ("no space char can only be 1 character"); }
+  if ( $space !~ /$nospace/) 
+    { fail_usage ("no space char not found in space char string"); }
+}
+
+#$outputfile .= strftime (":%M:%S:", localtime());
+
+if ($db==0) {
+  if (scalar @fdict == 0) {
+    if (! -e $fdict) { $fdict = $fdict2; }
+    if (! -e $fdict) { fail_usage ("Can't find dictionary ($fdict1) or ($fdict2)"); }
+    if (! -r $fdict) { fail_usage ("Can't read dictionary ($fdict1) or ($fdict2)"); }
+    push (@fdict, $fdict);
+  }
+}
+else {
+  # if using database pop can only be 1, 100, 1000
+  # because you can't do running totals in SQL!!!!
+  if ($pop<=50) { $pop=1; }
+  elsif ($pop<=500) { $pop=100; }
+  else { $pop=1000; }
+  
+  if ($dbase eq "") {
+    $dbase = $dbase1;
+    if (! -e $dbase) { $dbase = $dbase2; }
+    if (! -e $dbase) { $dbase = $dbase3; }
+    if (! -e $dbase) { fail_usage ("Can't find database ($dbase1) ($dbase2) ($dbase3)"); }
+    if (! -r $dbase) { fail_usage ("Can't read database ($dbase)"); }
+  }
+  if (! -e $sqlite3) { $sqlite3 = $sqlite3a; }
+  if (! -e $sqlite3) { fail_usage ("sqlite3 command not found"); }
+}
+
+my $spacel = length $space;
+if ($verbose) {
+  print "# (times)   -t \"$times\"  \n";  
+  print "# (space)   -s \"$space\" ($spacel) \n";  
+  print "# (nospace) -S \"$nospace\" \n";  
+  print "# (level)   -l \"$level\" \n";  
+  print "# (pop)     -p \"$pop\" \n";  
+  print "# (db)      -b \"$db\" \n";  
+#  print "# dicts = (". scalar @dict . ")\n";
+  if ($db==0) {
+    foreach my $file (@fdict) 
+      { print "# (Frequency list) -D \"$file\"  \n"; } 
+  }
+  else { print "# database file ($dbase)\n"; }
+  print "\n";
+}
+
+sub spacer () {
+  my $spaced = "";
+  if (length($space) <= 0) { return $spaced; }
+  if (length($space) == 1) { $spaced = $space; }
+  else { $spaced = substr ($space, int(rand(length($space))), 1); }
+  if ($spaced eq $nospace) { $spaced = ""; }
+  return $spaced;
+}
+
+my %parts = ();
+my %totals = ();
+my %totals100=();
+my %totals1000=();
+my $mycumulf = 'cumulf';
+my $mypop = '';
+
+if ($db==0) {
+  # read in wordlist
+  my $file_as_string = "";
+  foreach my $mydict (@fdict) { 
+    if (-f $mydict) {
+      $file_as_string .= do {
+        open( my $fh, $mydict ) or die "Can't open $mydict: $!";
+        local $/ = undef;
+        <$fh>;
+      };
+    }
+    $file_as_string .= "\n";
+  }
+  my @lines = split /[\r\n]+/, $file_as_string;
+  if ($verbose>1)
+   { print "# lines = (" . scalar @lines . "), \n"; }
+
+  sub readhash () {
+    map {
+      my ($weight, $word, $part) = split;
+      if ($weight > $pop && !/[\&!]/ && $word =~ /[a-z]/i ) {
+        if (length $part == 3) {
+          $parts{$part}{$word} += $weight;
+          $totals{$part} += $weight;
+        }
+        elsif ($part =~ /^(...)-(...)$/) {
+          my ($part1, $part2) = ($1, $2);
+          $parts{$part1}{$word} += $weight;
+          $totals{$part1} += $weight;
+          $parts{$part2}{$word} += $weight;
+          $totals{$part2} += $weight;
+        }
+      }
+    } @lines;  
+    if ($verbose) {
+      print "# parts = (" . scalar (keys %parts) . ") \n";
+      if ($verbose>2) {
+        foreach my $i (keys %parts) {
+          print "#   parts['$i'] = (".scalar keys (%{ $parts{$i} }) . ") t=($totals{$i}) \n";
+        }
+      }
+      print "\n";
+    }
+  }
+
+  readhash;
+
+} # read word lists
+else {
+  my @t = ($sqlite3, $dbase, "select * from totals;");
+  open(my $t, "-|", @t)   || die "can't run sqlite: $!";
+  while (my $tot = <$t>) {
+    chomp ($tot);
+    my ($part, $total, $total100, $total1000) = split (/\|/, $tot);
+    $totals{$part} = $total;
+    $totals100{$part} = $total100;
+    $totals1000{$part} = $total1000;
+  }
+  close($t)          || die "can't close sqlite: $!";
+  
+  if ($pop>1) {
+    $mypop =  " and frequency > '$pop' ";
+    $mycumulf .= '100';
+    if ($pop > 100) { $mycumulf .='0';}
+  }
+}
+
+# frequency distributions
+
+my $count = 0;
+my $comma = 0;
+
+sub weighted_rands (@) {
+  my (@myparts) = @_;
+  my $wtotal = 0;
+  $count++;
+  if ($db==0) {
+    foreach my $mypart (@myparts) {
+      # get totals
+      $wtotal += $totals{$mypart};
+    }
+    if ($verbose==1) { print "#l($level)"; }
+    if ($verbose==2)
+      { print "# l=($level) c=($count) t=($wtotal) ps=(" . join ("|",@myparts) . ") "; }
+    if ($verbose>2)
+      { print "# level=($level) rs=($count) t=($wtotal) ps=(" . join ("|",@myparts) . ") "; }
+    while (1) { # to avoid floating point inaccuracies 
+                # from a fragment from the net.  Is the while necessary?
+      my $rand = rand ($wtotal);
+      foreach my $mypart (@myparts) {
+        # skip over a whole part if we can
+        if ($rand > $totals{$mypart}) { $rand -= $totals{$mypart}; next; } 
+        while (my ($key, $weight) = each %{ $parts{$mypart} } ) {
+          if (($rand -= $weight) < 0) {
+            if ($key eq "'s") {
+              if ($mypart eq 'vbz') { $key = 'is'; }
+              elsif ($mypart eq 'vhz') { $key = 'has'; }
+            }
+            if ($verbose>1) { print "# k=($key)\n"; }
+            return $key;  
+          }
+         # return $key if ($rand -= $weight) < 0;
+        }
+      }
+    }
+  }
+  else {
+    my $mytotals = \%totals;
+    if ($pop==1000) { $mytotals = \%totals1000; }
+    elsif ($pop==100) { $mytotals = \%totals100; }
+    foreach my $mypart (@myparts) {
+      # get totals
+      $wtotal += ${$mytotals}{$mypart}; 
+    }
+    if ($verbose==1) { print "#l($level)"; }
+    if ($verbose==2)
+      { print "# l=($level) c=($count) t=($wtotal) ps=(" . join ("|",@myparts) . ") "; }
+    if ($verbose>2)
+      { print "# level=($level) rs=($count) t=($wtotal) ps=(" . join ("|",@myparts) . ") "; }
+
+    my $rand = int(rand($wtotal));
+
+    foreach my $mypart (@myparts) {
+      # skip over a whole part if we can
+      if ($rand > ${$mytotals}{$mypart}) { $rand -= ${$mytotals}{$mypart}; next; } 
+      my $query = "select word from words 
+        where part = '$mypart' 
+        $mypop
+        and $mycumulf >= '$rand'
+        order by $mycumulf asc 
+        limit 1;" ;
+      my @m = ($sqlite3, $dbase, $query);
+
+#     print "p=($mypart) t=($totals{$mypart}) r=($rand)\n";
+      if ($verbose) { print "# pop=($pop) m=($mypop) c=($mycumulf)\n"; }
+      if ($verbose) { print "# query=($query) \n"; }
+
+      open(my $p, "-|", @m)    || die "can't run sqlite: $!";
+      #open(my $p, "-|", @m)   || die "can't run sqlite: $!";
+      my $key = <$p> ; 
+#      my ($freq, $word, $part, $cumulf) = split (/\|/, $key);
+      close($p)          || die "can't close sqlite: $!"; 
+      #return $word;
+      if (!defined ($key)) { $key = "xx"; }
+      chomp $key;
+      if ($key eq "'s") {
+        if ($mypart eq 'vbz') { $key = 'is'; }
+        elsif ($mypart eq 'vhz') { $key = 'has'; }
+      }
+      if ($verbose>1) { print "# k=($key)\n"; }
+      return $key;
+    }
+  }
+}
+
+
+# noun nn0 nn1 nn2 np0 n[np][012]
+# pronoun pni pnp pnq pnx
+# verb vvz vvb vvg vvi vvd vvn
+# verb be vbz vbb vbg vbi vbd vbn
+# verb do vdz vdb vdg vdi vdd vdn
+# verb have vhz vhb vhg vhi vhd vhn
+# verb z=*s b=base g=ing i=inf d=past n=part
+# modal aux verb vm0
+# negative xx0
+# determinator dt0
+# article at0
+# interjection itj
+
+# just a pronoun
+sub pronoun () {
+  my $pn = weighted_rands (qw(pni pnp));
+  if ($pn eq 'i') { $pn = 'I'; }
+  return $pn;
+}
+sub pronoun_poss () { return weighted_rands (qw(dps)); }
+sub noun_proper () { return weighted_rands (qw(np0)); }
+sub noun () { return weighted_rands (qw(nn0 nn1 nn2)); }
+sub noun_any () { return weighted_rands (qw(nn0 nn1 nn2 np0)); }
+sub noun_sing () { return weighted_rands (qw(nn1)); }
+sub noun_pl () { return weighted_rands (qw(nn2)); }
+sub noun_innum () { return weighted_rands (qw(nn0)); }
+sub article () { return weighted_rands (qw(at0)); }
+sub detarticle () { return weighted_rands (qw(dt0 at0)); }
+sub interjection () { return weighted_rands (qw(itj)); }
+sub det () { return weighted_rands (qw(dt0)); }
+sub num () { return weighted_rands (qw(ord crd)); }
+sub adj_only () { return weighted_rands (qw(aj0 ajc ajs)); }
+sub adj () { return weighted_rands (qw(aj0 ajc ajs vvg vvn)); }
+sub adjv () { return weighted_rands (qw(vvg vvn)); }
+sub adv () { return weighted_rands (qw(avp)); }
+sub verb_simple () { return weighted_rands (qw(vbb vbd vbz vdb vdd vdz vhb vhd vhz vvb vvd vvz)); }
+sub verb_cont () { return weighted_rands (qw(vbg vdg vhg vvg)); }
+sub verb_past () { return weighted_rands (qw(vbn vdn vhn vvn)); }
+sub verb_inf () { return weighted_rands (qw(vbi vdi vhi vvi)); }
+sub verb_be () { return weighted_rands (qw(vbb vbd vbz)); }
+sub verb_do () { return weighted_rands (qw(vdb vdd vdz)); }
+sub verb_have () { return weighted_rands (qw(vhb vhd vhz)); }
+#sub verb_aux () { return weighted_rands (qw(vbb vbd vbz vdb vdd vdz vhb vhd vhz vm0)); }
+sub verb_aux () { return weighted_rands (qw(vm0)); }
+sub prep () { return weighted_rands (qw(prp prf)); }
+sub prep_simple () { return weighted_rands (qw(prp)); }
+sub conjunction () { return weighted_rands (qw(cjc cjs)); }
+sub relsub () { return weighted_rands (qw(dtq cjt)); }
+
+sub noun_clause; # forward declaration
+sub rel_clause;
+
+sub prep_clause () {
+  my $myout = "";
+  if ($level <= 0) { return $myout; }
+  $level--;
+  $myout = prep;
+  if (rand (100) < 20) { $myout .= spacer . adv; }
+  elsif (rand (100) < 20) { $myout .= spacer . pronoun; }
+  elsif (rand (100) < 20) { $myout .= spacer . noun; }
+  elsif (rand (100) < 20) { $myout .= spacer . verb_cont; }
+  else { $myout .= spacer . noun_clause; }
+  $level++;
+  return $myout;
+}
+
+sub adj_clause () {
+  my $myout = "";
+  if ($level <= 0) { return $myout; }
+  $level--;
+  # adjective
+  # maybe add an adverb
+  if (rand (100) < 40) { $myout .= adv; }
+  # add an adjective: adj, adjectival verb, noun
+  if (rand (100) < 20) { $myout .= spacer . noun; }
+  elsif (rand (100) < 40) { $myout .= spacer . adjv; }
+  else { $myout .= spacer . adj_only; }
+  if (rand(100) < 20) {
+    # add post modifier: adv prep clause, infinitive clause
+    if (rand (100) < 30) { $myout .= spacer . adv; }
+    elsif (rand (100) < 50) { $myout .= spacer . "to" . spacer . verb_inf; }
+    else  { $myout .= spacer . prep_clause; }
+  }
+  $level++;
+  return $myout;
+}
+
+sub simple_noun () {
+#  if (rand(100) < 50) { return pronoun; }
+  if (rand(100) < 20) {
+    return ucfirst(noun_proper);
+  }
+  return noun;
+}
+
+sub non_pronoun_clause; # forward declaration
+
+sub non_pronoun_add () {
+  my $myout = "";
+  if ($level <= 0) { return $myout; }
+  $level--;
+  if (rand(100) < 20) {
+    my $myout1 = non_pronoun_clause;
+    if (length $myout1 > 0) {
+      # might not get added because of $level (complexity)
+      if (rand(100) < 70) { $myout .= spacer . "of" ; }
+      else { $myout .= "'s" ; }
+      $myout .= spacer . $myout1 ;
+    }
+  }
+  if (rand(100) < 5) { $myout .= spacer . rel_clause; }
+  $level++;
+  return $myout ;
+}
+
+sub non_pronoun_clause () {
+  my $myout = "";
+  if ($level <= 0) { return $myout; }
+  $level--;
+  if (rand(100) < 30) { $myout .= det; }
+  elsif (rand(100) < 50) { $myout .= article; }
+#  elsif (rand(100) < 40) { $myout .= detarticle; }
+  elsif (rand(100) < 50) { $myout .= pronoun_poss; }
+  # adjective
+  if (rand(100) < 50) { $myout .= spacer . adj_clause; }
+  # noun
+  $myout .= spacer . simple_noun ;
+  $myout .= spacer . non_pronoun_add ;
+  # here could be a prep clause or a relative clause
+  $level++;
+  return $myout ;
+}
+
+sub noun_clause () {
+  my $myout = "";
+  if ($level <= 0) { return $myout; }
+  $level--;
+  if (rand(100) < 40) {
+    # pronoun, no adjectives or articles
+    $myout .= spacer . pronoun;
+    $myout .= spacer . non_pronoun_add;
+    $level++;
+    return $myout ;
+  }
+  $myout .= non_pronoun_clause;
+  # here could be a prep clause or a relative clause
+  $level++;
+  return $myout ;
+}
+
+sub verb_clause () {
+  my $myout = "";
+  if ($level <= 0) { return $myout; }
+  $level--;
+# (modal aux verb) verb
+# verb - pres past
+# verb be continuous 
+# verb past part
+# verb infitive
+
+  if (rand(100) < 40) {
+    if (rand(100) < 10) { $myout .= verb_do ; }
+    elsif (rand(100) < 5) {
+      $myout .= verb_be ;
+      $myout .= spacer . "going to" ;
+    }
+    else {
+      $myout .= verb_aux;
+      if (rand(100) < 40) { $myout .= spacer . "to"; }
+    } 
+    $myout .= spacer . verb_inf;
+  }
+  elsif (rand(100) < 20) {
+    $myout .= spacer . verb_have ;
+    $myout .= spacer . verb_past;
+  }
+  elsif (rand(100) < 20) {
+    $myout .= spacer . verb_be ;
+    $myout .= spacer . verb_cont;
+  }
+  else {
+    $myout .= spacer . verb_simple;
+  }
+  # maybe add a preposition?
+  if (rand(100) < 5) { $myout .= spacer . prep_simple; }
+  $level++;
+  return $myout;
+}
+
+sub predicate () {
+  # simplified sentence : noun, verb, object, preposition_clause
+  my $myout = "";
+  if ($level <= 0) { return $myout; }
+  $level--;
+  $myout .= verb_clause;
+  if (rand(100) < 50) { $myout .= spacer . noun_clause; }
+  if (rand(100) < 50) { $myout .= spacer . prep_clause; }
+  $level++;
+  return $myout;
+}
+
+sub rel_clause () {
+  # simplified sentence : noun, verb, object, preposition_clause
+  my $myout = "";
+  if ($level <= 0) { return $myout; }
+  $level--;
+  $myout = ',' . spacer . relsub . spacer . predicate . ',';
+  $level++;
+  return $myout;
+}
+
+sub simple_sentence () {
+  # simplified sentence : noun, verb, object, preposition_clause
+  my $myout = "";
+  if ($level <= 0) { return $myout; }
+  $level--;
+  $myout = noun_clause; 
+  $myout .= spacer . predicate;
+  $level++;
+  return $myout;
+}
+
+sub sentence () {
+  # simplified sentence : noun, verb, object, preposition_clause
+  my $myout = "";
+  if ($level <= 0) { return $myout; }
+  $level--;
+#  if (rand(100) < 20)
+#    { $myout = simple_sentence . spacer . conjunction . spacer . simple_sentence ; }
+#  elsif (rand(100) < 10)
+#    { $myout = conjunction . spacer . simple_sentence . spacer . simple_sentence ; }
+#  else {
+  $myout = simple_sentence;
+#  }
+  $level++;
+  return $myout;
+}
+
+sub fix_sentence {
+  my $sentence = shift;
+  $sentence =~ s/ +/ /g;
+  $sentence =~ s/ ,/,/g;
+  $sentence =~ s/^[ ,]//;
+  $sentence =~ s/[ ,]*$//;
+  return ucfirst ($sentence) . ".  ";
+}
+
+if ($para == 0) {
+  for (1..$times) { 
+    my $out = "";
+    $out = fix_sentence (sentence); 
+#    if ($verbose) { print "# $out\n"; }
+    if ($verbose) { print "\n"; }
+    print "$out\n";
+  }
+}
+else {
+  for (1..$times) { 
+    my $out = "";
+    for (1..(int(rand(10))+1)) { 
+      $out .= fix_sentence (sentence); 
+    }
+    print "$out\n\n";
+  }
+}
+#  print "\n";
+#  if ($verbose) { print "\n"; }
+

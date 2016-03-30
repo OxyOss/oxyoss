@@ -1,0 +1,3 @@
+#!/bin/sh
+
+a2ps -s1 --portrait -1 "$@"
