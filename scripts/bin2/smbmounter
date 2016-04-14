@@ -1,0 +1,4 @@
+#!/bin/bash
+
+sudo smbmount '//auscan01-dc01/home$' /smb/hdrive/ -o user=kholburn
+

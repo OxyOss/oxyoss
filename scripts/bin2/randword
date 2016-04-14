@@ -1,0 +1,398 @@
+#!/usr/bin/perl -wT
+
+# (C) Kim Holburn 2011 
+# released  under GNU Public License http://www.gnu.org/copyleft/gpl.html
+# script to generate pseudo-random phrases
+# version 1.1 2011-09-22
+
+# word frequency lists:
+# http://www.kilgarriff.co.uk/bnc-readme.html
+# http://www.kilgarriff.co.uk/BNClists/all.al.gz
+# I expect a text file with an entry per line
+# space separated fields with frequency number and word being 
+# all I use.
+# I have removed a lot of entries using these following greps
+
+# grep -Pi "^\d+ [a-z-_']+ " all.al > alln2.al  # only entries with a-z A-Z - _ '
+# grep -Pvi " '[^ ']*' " alln2.al>alln3.al      # remove entries in quotes
+# grep -v '[-]-' alln3.al > alln4.al            # remove entries with --
+# grep -v '^1 ' alln4.al > alln5.al             # remove entries with a frequency of 1
+
+
+
+use strict;
+#use POSIX qw(strftime);
+
+sub fail_usage {
+  my (@mess) = @_;
+  my $name = $0;
+  $name =~ s#^.*/(.+)$#$1#;
+
+  for (@mess) { print STDERR "$name Error : $_ \n"; }
+  print STDERR <<EOM;
+Usage : $name  -h|--help
+Usage : $name 
+Usage : $name  -w 
+
+  options: [-W <words>] [-t <times>] [-v [-v] verbose ]
+           [-u] [-a] [-m|--min 2] [-x|--max 7]
+           [-s " _-.,"] 
+
+  randword has two modes:
+    -w|--frequency  = use frequency weighted word list
+                (more frequently used words are more likely to be chosen)
+    -n|--normal (default) Use normal dictionary
+
+  These options are universal:
+    -t|--times <num>  = output number of times 
+    -W|--words <num>  = output number of words 
+    -a|--any-length        = words of any length
+    -m|--min  = min word length (default: 2)
+    -x|--max  = max word length (default: 7)
+    -s|--spaces <str>  = space (default: " ")
+                -s "" for no spaces
+                more than one space character will be used randomly
+                between each word 
+    -S|--no-space <char> = choose this char from the -s string as empty char
+                It's hard to explain this option.
+                add a letter like say 3 to the space list then
+                add -S "3" and whenever the 3 gets chosen as 
+                the space the program adds no space.
+
+  These options for normal mode only:
+    -u|--unique = remove duplicate words 
+                 (only for normal dictionary mode)
+    -d|--dictionary "/path/to/dictionary/or/directory/of/dictionaries"
+               (you can add as many of these as you like)
+
+  These options only for frequency word list:
+    -f|--list "/path/to/word-frequency-list" 
+               (you can add as many of these as you like)
+    -p|--pop <n> words popularity: 
+        only words of frequency greater than n
+        default is 1
+
+    default number of words output is -W 4
+    default number of times output is -t 1
+
+  -h|--help = show this help screen
+    
+  Defaults are:
+    $name -d "/usr/share/dict/words" -W 4 -t 1 -s " "
+    $name -f "${0}s/all.al" -W 4 -t 1 -s " " -p 1
+  Examples: 
+    Main way of using:
+      $name         (some random words)
+      $name -w      (frequency weighted random words)
+
+      $name -W 3    (three random words)
+    
+EOM
+  exit 1;
+}
+
+
+my $dict = "/usr/share/dict/words";
+my $fdict = "${0}s/all.al";
+my @dict = ();
+my @fdict = ();
+my $uniq=0;
+my $number=4;
+my $times=5;
+my $listy=0;
+my $added=''; 
+my $verbose=0;
+my $lower=1;
+my $upper=0;
+my $wmin=2;
+my $wmax=7;
+my $wany=0;
+my $freq=0;
+my $space=" ";
+my $nospace="";
+my $pop=1;
+
+while ($ARGV=$ARGV[0]) {
+  if ($ARGV eq "-W" or $ARGV eq "--words")  {
+    shift @ARGV;
+    if ($#ARGV < 0) { &fail_usage ("no number after -W option"); }
+    $number=shift @ARGV;
+    if ($number !~ /^[0-9]{1,}$/)
+      { &fail_usage ("I don't understand ($number) as a number"); }
+    if ($number <= 0)
+      { &fail_usage ("word number must be greater than 0 (was $number)"); }
+  } 
+  elsif ($ARGV eq "-t" or $ARGV eq "--times")  {
+    shift @ARGV;
+    if ($#ARGV < 0) { &fail_usage ("no times after -t option"); }
+    $times=shift @ARGV;
+    if ($times !~ /^[0-9]{1,}$/)
+      { &fail_usage ("I don't understand ($times) as a number"); }
+    if ($times <= 0)
+      { &fail_usage ("times must be greater than 0 (was $times)"); }
+  } 
+  elsif ($ARGV eq "-x" or $ARGV eq "--max")  {
+    shift @ARGV;
+    if ($#ARGV < 0) { &fail_usage ("no max after -x option"); }
+    $wmax=shift @ARGV;
+    if ($wmax !~ /^[0-9]{1,}$/)
+      { &fail_usage ("I don't understand ($wmax) as a number"); }
+    if ($wmax <= 0)
+      { &fail_usage ("max must be greater than 0 (was $wmax)"); }
+  } 
+  elsif ($ARGV eq "-m" or $ARGV eq "--min")  {
+    shift @ARGV;
+    if ($#ARGV < 0) { &fail_usage ("no min after -m option"); }
+    $wmin=shift @ARGV;
+    if ($wmin !~ /^[0-9]{1,}$/)
+      { &fail_usage ("I don't understand ($wmin) as a number"); }
+    if ($wmin <= 0)
+      { &fail_usage ("min must be greater than 0 (was $wmin)"); }
+  } 
+  elsif ($ARGV eq "-p" or $ARGV eq "--pop")  {
+    shift @ARGV;
+    if ($#ARGV < 0) { &fail_usage ("no min after -p option"); }
+    $pop=shift @ARGV;
+    if ($pop !~ /^[0-9]{1,}$/)
+      { &fail_usage ("I don't understand ($pop) as a number"); }
+    if ($pop <= 0)
+      { &fail_usage ("pop must be greater than 0 (was $pop)"); }
+  } 
+  elsif ($ARGV eq "-s" or $ARGV eq "--spaces")  {
+    shift @ARGV;
+    if ($#ARGV < 0) { &fail_usage ("no string after -s option"); }
+    $space=shift @ARGV;
+    $space =~ s/[^[:print:]]//g; # only printable chars;
+  } 
+  elsif ($ARGV eq "-S" or $ARGV eq "--no-space")  {
+    shift @ARGV;
+    if ($#ARGV < 0) { &fail_usage ("no string after -S option"); }
+    $nospace=shift @ARGV;
+    $nospace =~ s/[^[:print:]]//g; # only printable chars
+    $nospace =~ s/^(.).*/$1/g;     # only one char
+  } 
+  elsif ($ARGV eq "-d" || $ARGV eq "-f" || $ARGV eq "--dictionary" || $ARGV eq "--list") {
+    my $myopt = $ARGV;
+    my @mydict = ();
+    shift @ARGV;
+    my $file = shift @ARGV;
+    if (! -e $file) 
+      { fail_usage ("Can't find user supplied Dictionary ($file)"); }
+    if (! -r $file) 
+      { fail_usage ("Can't read user supplied Dictionary ($file)"); }
+    if (-d $file) {  # directory
+      opendir my($dh), $file or die "Couldn't open dir '$file': $!";
+      my @files = grep { (! -l $_) && -r _ && -f _ } map { $_ = "$file/$_"; } readdir $dh;  # read actual files but not directories
+      closedir $dh;
+      if (!scalar @files) { fail_usage ("Couldn't find files to read in user supplied dictionary directory ($file)"); } 
+      push (@mydict, @files);
+    }
+    else { push (@mydict, $file); }
+    if ($myopt eq "-d" or $myopt eq "--dictionary") {
+      if (scalar @fdict) { fail_usage ("Adding word dictionary when frequency word mode specified"); }
+      push (@dict, @mydict);
+    }
+    else {
+      if (scalar @dict) { fail_usage ("Adding word frequency list when normal word mode specified"); }
+      push (@fdict, @mydict);
+      $freq=1;
+    }
+  }
+  elsif ($ARGV eq "-w" or $ARGV eq "--frequency")  { $freq=1; shift @ARGV; }
+  elsif ($ARGV eq "-n" or $ARGV eq "--normal")  { $freq=0; shift @ARGV; }
+  elsif ($ARGV eq "-u" or $ARGV eq "--unique")  { $uniq=1; shift @ARGV; }
+  elsif ($ARGV eq "-a" or $ARGV eq "--any-length")  { $wany=1; shift @ARGV; }
+  elsif ($ARGV eq "-h" || $ARGV eq "--help")  { &fail_usage (); }
+  elsif ($ARGV eq "-v" or $ARGV eq "--verbose")  { $verbose++; shift @ARGV; }
+  elsif ($ARGV =~ /^-/)  { &fail_usage ("unknown option \"$ARGV\""); }
+  else {  last; }
+}
+if (scalar @ARGV > 0) { &fail_usage ("extra arguments"); }
+if ($wmin > $wmax)
+  { &fail_usage ("min word length must be less than oe equal to max ($wmin > $wmax)"); }
+if (length $nospace) {
+  if (length $nospace > 1)
+    { fail_usage ("no space char can only be 1 character"); }
+  if ( $space !~ /$nospace/) 
+    { fail_usage ("no space char not found in space char string"); }
+}
+
+#$outputfile .= strftime (":%M:%S:", localtime());
+
+if ($freq) {
+  if (scalar @fdict == 0) {
+    if (! -e $fdict) { fail_usage ("Can't find dictionary ($fdict)"); }
+    if (! -r $fdict) { fail_usage ("Can't read dictionary ($fdict)"); }
+    push (@fdict, $fdict);
+  }
+}
+else {
+  if (scalar @dict == 0) {
+    if (! -e $dict) { fail_usage ("Can't find dictionary ($dict)"); }
+    if (! -r $dict) { fail_usage ("Can't read dictionary ($dict)"); }
+    push (@dict, $dict);
+  }
+}
+
+my $spacel = length $space;
+if ($verbose) {
+  print "# (freq)    -w \"$freq\"  \n";  
+  print "# (words)   -W \"$number\"  \n";  
+  print "# (max)     -x \"$wmax\"  \n";  
+  print "# (min)     -m \"$wmin\"  \n";  
+  print "# (any)     -a \"$wany\"  \n";  
+  print "# (uniq)    -u \"$uniq\"  \n";  
+  print "# (times)   -t \"$times\"  \n";  
+  print "# (space)   -s \"$space\" ($spacel) \n";  
+  print "# (nospace) -S \"$nospace\" \n";  
+  print "# (pop)     -p \"$pop\" \n";  
+#  print "# dicts = (". scalar @dict . ")\n";
+  if ($freq) {
+    foreach my $file (@fdict) 
+      { print "# (Frequency list) -D \"$file\"  \n"; } 
+  }
+  else {
+    foreach my $file (@dict) 
+      { print "# (Dictionary) -D \"$file\"  \n"; } 
+  }
+  print "\n";
+}
+
+sub spacer () {
+  my $spaced = "";
+  if (length($space) <= 0) { return $spaced; }
+  if (length($space) == 1) { $spaced = $space; }
+  else { $spaced = substr ($space, int(rand(length($space))), 1); }
+  if ($spaced eq $nospace) { $spaced = ""; }
+  return $spaced;
+}
+
+if (!$freq) {
+  my $file_as_string = "";
+  foreach my $mydict (@dict) { 
+    if (-f $mydict) {
+      $file_as_string .= do {
+        open( my $fh, $mydict ) or die "Can't open $mydict: $!";
+        local $/ = undef;
+        <$fh>;
+      };
+    }
+    $file_as_string .= "\n";
+  }
+  
+  my @words = split /[\s\n]+/, $file_as_string;
+  my $wordn = scalar @words;
+  if ($uniq) {
+    my @uniqs;
+    my %seen = (); 
+    @uniqs = grep { ! $seen{$_} ++ } @words; # remove duplicates
+    @words = @uniqs;
+  }
+  my $un = scalar @words;
+  if ($verbose) { print "# words = ($wordn), unique words = ($un)\n"; }
+
+  my $dist = $wmax - $wmin;
+  if ($verbose) { print "# dist = ($dist)\n"; }
+
+  for (1..$times) { 
+    my $out = "";
+    if ($wany) {
+      for (1..$number) {
+        if (length ($out) > 0) { $out .= spacer(); }
+        $out .= $words[int(rand(scalar @words))];
+      }
+    }
+    else {
+      my @list;
+      for (1..$number) {
+        my $wordl = $wmin;
+        if ($dist) { $wordl += int(rand($dist)) }
+        if (!defined $list[$wordl]) {
+          my @lwords = grep { length == $wordl } @words;
+          $list[$wordl] = \@lwords;
+        }
+        my $lwords = $list[$wordl];
+        my $rnlwords = scalar @$lwords;
+        if ($verbose) { print "# word len = ($wordl)  words = ($rnlwords) \n"; }
+        if (length ($out) > 0) { $out .= spacer(); }
+        $out .= $$lwords[int(rand($rnlwords))];
+      }
+    }
+    if ($verbose) { print "# $out\n"; }
+    print "$out\n";
+  }
+}
+
+else {
+  # frequency distributions
+
+  my $total = 0;
+  sub weighted_rand (\%) {
+    my $dists = shift;
+    my ($key, $weight);
+    my $rand;
+    while (1) { # to avoid floating point inaccuracies
+      $rand = rand ($total);
+      while (($key, $weight) = each %$dists )
+        { return $key if ($rand -= $weight) < 0; }
+    }
+  }
+  my $file_as_string = "";
+  foreach my $mydict (@fdict) { 
+    if (-f $mydict) {
+      $file_as_string .= do {
+        open( my $fh, $mydict ) or die "Can't open $mydict: $!";
+        local $/ = undef;
+        <$fh>;
+      };
+    }
+    $file_as_string .= "\n";
+  }
+  my @lines = split /[\r\n]+/, $file_as_string;
+  if ($verbose)
+   { print "# lines = (" . scalar @lines . "), \n"; }
+  my %fwords = ();
+  map {
+    my ($weight, $word) = split;
+    if ($weight > $pop && !/[\&!]/ && $word =~ /[a-z]/i ) {
+      $fwords{$word} += $weight;
+      $total += $weight;
+    }
+  } @lines;  
+  if ($verbose)
+   { print "# entries = (" . scalar (keys %fwords) . "), total=($total)\n"; }
+  my $dist = $wmax - $wmin;
+  if ($verbose) { print "# dist = ($dist)\n"; }
+
+  for (1..$times) { 
+    my $out = "";
+    if ($wany) {
+      for (1..$number) {
+        if (length ($out) > 0) { $out .= spacer(); }
+        $out .= weighted_rand (%fwords);
+      }
+    }
+    else {
+      my @list;
+      for (1..$number) {
+        my $wordl = $wmin;
+        if ($dist) { $wordl += int(rand($dist)) }
+        if (!defined $list[$wordl]) {
+          my %lwords = () ;
+          map { if (length == $wordl) { $lwords{$_} += $fwords{$_}; } } (keys %fwords);
+          $list[$wordl] = \%lwords;
+        }
+        my $lwords = $list[$wordl];
+        my $rnlwords = scalar keys %$lwords;
+        if ($verbose) { print "# word len = ($wordl)  words = ($rnlwords) \n"; }
+        if (length ($out) > 0) { $out .= spacer(); }
+        $out .= weighted_rand (%$lwords);
+      }
+      
+    }
+
+    if ($verbose) { print "# $out\n"; }
+    print "$out\n";
+  }
+}
+
